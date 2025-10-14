@@ -1,4 +1,4 @@
-const { mapAsanaSectionToSlackStatus, mapAsanaEnumToSlackValue } = require('../../asana-helper/schema');
+const { mapAsanaSectionToSlackStatus, mapAsanaEnumToSlackValue } = require('../../lib/schema');
 
 /**
  * AsanaToSlackTransformer - Transforms Asana tasks to Slack List item format
