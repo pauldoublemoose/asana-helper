@@ -1,5 +1,4 @@
 require('dotenv').config();
-const { SocketModeClient } = require('@slack/socket-mode');
 const { WebClient } = require('@slack/web-api');
 const express = require('express');
 const crypto = require('crypto');
@@ -16,11 +15,7 @@ const EchoDetector = require('./utils/echo-detector');
 
 console.log('🚀 MooseBot Sync Server Starting...');
 
-// Initialize Slack clients
-const socketMode = new SocketModeClient({ 
-  appToken: process.env.SLACK_SOCKET_TOKEN,
-  logLevel: 'info'
-});
+// Initialize Slack clients (no RTM needed for Events API)
 const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
 
 // Initialize Asana clients
@@ -47,32 +42,49 @@ app.use(express.json());
 app.use(express.text()); // For webhook signature verification
 
 // ============================================
-// SLACK → ASANA (RTM file_change event)
+// SLACK → ASANA (Events API webhook)
 // ============================================
 
-socketMode.on('slack_event', async ({ event, body, ack }) => {
-  await ack();
-  
-  if (event.type !== 'file_change') return;
+app.post('/slack-events', async (req, res) => {
   try {
-    const file = event.file;
+    const payload = req.body;
     
-    // Filter: only our List file
-    if (file.id !== process.env.SLACK_LIST_ID) {
-      return;
+    // Handle URL verification challenge
+    if (payload.type === 'url_verification') {
+      console.log('🤝 Slack Events API verification challenge');
+      return res.json({ challenge: payload.challenge });
     }
     
-    console.log('📝 Slack List changed, syncing to Asana...');
+    // Acknowledge receipt immediately
+    res.status(200).send();
     
-    // Small delay to let Slack finalize the change
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    // Fetch updated List items
-    const response = await slack.apiCall('slackLists.items.list', {
-      list_id: process.env.SLACK_LIST_ID
-    });
-    
-    const items = response.items || [];
+    // Handle event callback
+    if (payload.type === 'event_callback') {
+      const event = payload.event;
+      
+      console.log('🔔 Slack event received:', event.type, JSON.stringify(event, null, 2));
+      
+      // Handle file_change event
+      if (event.type === 'file_change') {
+        const file = event.file;
+        
+        // Filter: only our List file
+        if (file.id !== process.env.SLACK_LIST_ID) {
+          console.log(`Ignoring file ${file.id}, not our list`);
+          return;
+        }
+        
+        console.log('📝 Slack List changed, syncing to Asana...');
+        
+        // Small delay to let Slack finalize the change
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Fetch updated List items
+        const response = await slack.apiCall('slackLists.items.list', {
+          list_id: process.env.SLACK_LIST_ID
+        });
+        
+        const items = response.items || [];
     console.log(`Found ${items.length} items in Slack List`);
     
     for (const item of items) {
@@ -135,9 +147,11 @@ socketMode.on('slack_event', async ({ event, body, ack }) => {
     }
     
     console.log('✅ Slack → Asana sync complete');
+      }
+    }
     
   } catch (error) {
-    console.error('❌ Error in file_change handler:', error);
+    console.error('❌ Error handling Slack event:', error);
   }
 });
 
@@ -308,7 +322,7 @@ async function findSlackItemByAsanaGid(asanaGid) {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    socket_connected: socketMode.connected,
+    events_api: 'enabled',
     uptime: process.uptime(),
     timestamp: new Date().toISOString()
   });
@@ -319,12 +333,119 @@ app.get('/', (req, res) => {
     name: 'MooseBot Sync Server',
     version: '1.0.0',
     status: 'running',
-    socket_connected: socketMode.connected,
+    events_api: 'enabled',
     endpoints: {
       health: '/health',
-      asana_webhook: '/asana-webhook'
+      asana_webhook: '/asana-webhook',
+      test_sync: '/test-sync',
+      manual_sync: '/manual-sync'
     }
   });
+});
+
+// Test endpoint to check Slack List access
+app.get('/test-sync', async (req, res) => {
+  try {
+    console.log('🧪 Testing Slack List access...');
+    
+    const response = await slack.apiCall('slackLists.items.list', {
+      list_id: process.env.SLACK_LIST_ID
+    });
+    
+    const items = response.items || [];
+    
+    res.json({
+      success: true,
+      list_id: process.env.SLACK_LIST_ID,
+      item_count: items.length,
+      items: items.map(item => ({
+        id: item.id,
+        fields: item.fields.length,
+        created: item.date_created
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Manual sync trigger endpoint
+app.post('/manual-sync', async (req, res) => {
+  try {
+    console.log('🔄 Manual sync triggered...');
+    
+    // Fetch Slack List items
+    const response = await slack.apiCall('slackLists.items.list', {
+      list_id: process.env.SLACK_LIST_ID
+    });
+    
+    const items = response.items || [];
+    console.log(`Found ${items.length} items in Slack List`);
+    
+    let created = 0, updated = 0, errors = 0;
+    
+    for (const item of items) {
+      const itemId = item.id;
+      
+      try {
+        // Transform Slack → Asana
+        const asanaData = slackToAsana.transform(item);
+        const asanaGid = slackToAsana.extractAsanaGid(item);
+        
+        if (asanaGid) {
+          // Update existing task
+          console.log(`Updating Asana task ${asanaGid}...`);
+          await asanaWriter.updateTask(asanaGid, asanaData);
+          
+          if (asanaData.sectionGid) {
+            await asanaWriter.moveToSection(asanaGid, asanaData.sectionGid);
+          }
+          updated++;
+        } else {
+          // Create new task
+          console.log(`Creating new Asana task...`);
+          const newTask = await asanaWriter.createTask(
+            asanaData.sectionGid,
+            asanaData
+          );
+          
+          // Add Asana link back to Slack item
+          await slack.apiCall('slackLists.items.update', {
+            list_id: process.env.SLACK_LIST_ID,
+            cells: [{
+              row_id: itemId,
+              column_id: columnMap.asana_link,
+              link: {
+                url: newTask.permalink_url,
+                text: 'View in Asana'
+              }
+            }]
+          });
+          created++;
+        }
+      } catch (error) {
+        console.error(`Error syncing item ${itemId}:`, error.message);
+        errors++;
+      }
+    }
+    
+    res.json({
+      success: true,
+      synced: items.length,
+      created,
+      updated,
+      errors
+    });
+  } catch (error) {
+    console.error('Manual sync error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 // ============================================
@@ -381,10 +502,8 @@ async function start() {
     asanaToSlack = new AsanaToSlackTransformer(columnMap);
     console.log('✅ Transformers initialized');
     
-    // 4. Start RTM client
-    console.log('🔌 Connecting to Slack RTM...');
-    await socketMode.start();
-    console.log('✅ RTM connected');
+    // 4. Events API configured (no connection needed)
+    console.log('✅ Slack Events API endpoint ready at /slack-events');
     
     // 5. Start Express server
     const PORT = process.env.PORT || 3000;
@@ -411,14 +530,14 @@ async function start() {
 process.on('SIGTERM', async () => {
   console.log('Received SIGTERM, shutting down gracefully...');
   echoDetector.destroy();
-  await socketMode.disconnect();
+  // No RTM to disconnect
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   console.log('Received SIGINT, shutting down gracefully...');
   echoDetector.destroy();
-  await socketMode.disconnect();
+  // No RTM to disconnect
   process.exit(0);
 });
 
