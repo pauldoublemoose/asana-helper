@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@slack/rtm-api": "^7.0.0",
+    "@slack/socket-mode": "^2.0.5",
     "@slack/web-api": "^7.10.0",
     "asana": "^3.0.0",
     "dotenv": "^16.5.0",

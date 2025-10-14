@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { RTMClient } = require('@slack/rtm-api');
+const { SocketModeClient } = require('@slack/socket-mode');
 const { WebClient } = require('@slack/web-api');
 const express = require('express');
 const crypto = require('crypto');
@@ -17,7 +17,10 @@ const EchoDetector = require('./utils/echo-detector');
 console.log('🚀 MooseBot Sync Server Starting...');
 
 // Initialize Slack clients
-const rtm = new RTMClient(process.env.SLACK_BOT_TOKEN);
+const socketMode = new SocketModeClient({ 
+  appToken: process.env.SLACK_SOCKET_TOKEN,
+  logLevel: 'info'
+});
 const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
 
 // Initialize Asana clients
@@ -47,7 +50,10 @@ app.use(express.text()); // For webhook signature verification
 // SLACK → ASANA (RTM file_change event)
 // ============================================
 
-rtm.on('file_change', async (event) => {
+socketMode.on('slack_event', async ({ event, body, ack }) => {
+  await ack();
+  
+  if (event.type !== 'file_change') return;
   try {
     const file = event.file;
     
@@ -302,7 +308,7 @@ async function findSlackItemByAsanaGid(asanaGid) {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    rtm_connected: rtm.connected,
+    socket_connected: socketMode.connected,
     uptime: process.uptime(),
     timestamp: new Date().toISOString()
   });
@@ -313,7 +319,7 @@ app.get('/', (req, res) => {
     name: 'MooseBot Sync Server',
     version: '1.0.0',
     status: 'running',
-    rtm_connected: rtm.connected,
+    socket_connected: socketMode.connected,
     endpoints: {
       health: '/health',
       asana_webhook: '/asana-webhook'
@@ -352,15 +358,23 @@ async function start() {
     
     // 2. Fetch Slack List metadata
     console.log('  - Fetching Slack List schema...');
-    const listResponse = await slack.apiCall('slackLists.info', {
-      list_id: process.env.SLACK_LIST_ID
+    // Note: slackLists.info method doesn't exist in the Slack API
+    // We'll build the column map from actual list items instead
+    const itemsResponse = await slack.apiCall('slackLists.items.list', {
+      list_id: process.env.SLACK_LIST_ID,
+      limit: 1
     });
     
-    const schema = listResponse.list_metadata?.schema || [];
-    schema.forEach(col => {
-      columnMap[col.key] = col.id;
-    });
-    console.log(`  ✅ Loaded ${schema.length} Slack List columns`);
+    // Build column map from the first item's fields
+    if (itemsResponse.items && itemsResponse.items.length > 0) {
+      const firstItem = itemsResponse.items[0];
+      firstItem.fields.forEach(field => {
+        if (field.column_id) {
+          columnMap[field.key] = field.column_id;
+        }
+      });
+    }
+    console.log(`  ✅ Loaded ${Object.keys(columnMap).length} Slack List columns`);
     
     // 3. Initialize transformers
     slackToAsana = new SlackToAsanaTransformer(sectionMap, customFieldMap);
@@ -369,7 +383,7 @@ async function start() {
     
     // 4. Start RTM client
     console.log('🔌 Connecting to Slack RTM...');
-    await rtm.start();
+    await socketMode.start();
     console.log('✅ RTM connected');
     
     // 5. Start Express server
@@ -394,17 +408,17 @@ async function start() {
 }
 
 // Handle graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('Received SIGTERM, shutting down gracefully...');
   echoDetector.destroy();
-  rtm.disconnect();
+  await socketMode.disconnect();
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('Received SIGINT, shutting down gracefully...');
   echoDetector.destroy();
-  rtm.disconnect();
+  await socketMode.disconnect();
   process.exit(0);
 });
 
