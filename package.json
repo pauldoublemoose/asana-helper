@@ -1,13 +1,10 @@
 {
-  "name": "moosebot-sync",
+  "name": "asana-helper",
   "version": "1.0.0",
-  "description": "Bidirectional Asana ↔ Slack List sync with Railway + RTM API",
+  "description": "Bidirectional Asana ↔ Slack List sync",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "register-webhook": "node src/setup/register-asana-webhook.js",
-    "test-asana": "node asana-helper/test-asana.js",
-    "test-slack": "node asana-helper/test-slack-list.js"
+    "start": "node src/server.js"
   },
   "dependencies": {
     "@slack/rtm-api": "^7.0.0",
