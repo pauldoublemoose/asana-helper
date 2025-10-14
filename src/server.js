@@ -5,7 +5,7 @@ const express = require('express');
 const crypto = require('crypto');
 
 const AsanaWriter = require('./asana/asana-writer');
-const AsanaClient = require('../asana-helper/asana-client');
+const AsanaClient = require('../lib/asana-client');
 const SlackToAsanaTransformer = require('./transformers/slack-to-asana');
 const AsanaToSlackTransformer = require('./transformers/asana-to-slack');
 const EchoDetector = require('./utils/echo-detector');
