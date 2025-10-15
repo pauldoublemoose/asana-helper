@@ -49,6 +49,8 @@ app.post('/slack-events', async (req, res) => {
   try {
     const payload = req.body;
     
+    console.log('📥 Received Slack webhook:', payload.type);
+    
     // Handle URL verification challenge
     if (payload.type === 'url_verification') {
       console.log('🤝 Slack Events API verification challenge');
