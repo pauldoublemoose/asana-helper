@@ -76,10 +76,7 @@ app.post('/slack-events', async (req, res) => {
           return;
         }
         
-        console.log('📝 Slack List changed, syncing to Asana...');
-        
-        // Small delay to let Slack finalize the change
-        await new Promise(resolve => setTimeout(resolve, 500));
+        console.log('📝 Slack List changed, fetching items...');
         
         // Fetch updated List items
         const response = await slack.apiCall('slackLists.items.list', {
@@ -87,68 +84,28 @@ app.post('/slack-events', async (req, res) => {
         });
         
         const items = response.items || [];
-    console.log(`Found ${items.length} items in Slack List`);
-    
-    for (const item of items) {
-      const itemId = item.id;
-      
-      // Echo detection: ignore if we just updated this from Asana
-      if (echoDetector.shouldIgnore(itemId, 'slack')) {
-        console.log(`⏭️  Skipping ${itemId} (echo from Asana)`);
-        continue;
-      }
-      
-      try {
-        // Transform Slack → Asana
-        const asanaData = slackToAsana.transform(item);
-        const asanaGid = slackToAsana.extractAsanaGid(item);
+        console.log(`Found ${items.length} items in Slack List`);
         
-        if (asanaGid) {
-          // Update existing task
-          console.log(`Updating existing Asana task ${asanaGid}...`);
+        for (const item of items) {
+          const itemId = item.id;
           
-          await asanaWriter.updateTask(asanaGid, asanaData);
-          
-          if (asanaData.sectionGid) {
-            await asanaWriter.moveToSection(asanaGid, asanaData.sectionGid);
+          try {
+            // Transform Slack → Asana
+            const asanaData = slackToAsana.transform(item);
+            const asanaGid = slackToAsana.extractAsanaGid(item);
+            
+            console.log(`\n📋 Item ${itemId}:`);
+            console.log('  Slack data:', JSON.stringify(item, null, 2));
+            console.log('  Transformed Asana data:', JSON.stringify(asanaData, null, 2));
+            console.log('  Existing Asana GID:', asanaGid || 'NEW TASK');
+            console.log('  🛑 Would create/update - but skipping for verification\n');
+            
+          } catch (error) {
+            console.error(`❌ Error transforming item ${itemId}:`, error.message);
           }
-          
-          console.log(`✅ Updated Asana task ${asanaGid}`);
-        } else {
-          // Create new task
-          console.log(`Creating new Asana task...`);
-          
-          const newTask = await asanaWriter.createTask(
-            asanaData.sectionGid,
-            asanaData
-          );
-          
-          // Add Asana link back to Slack item
-          console.log(`Adding Asana link to Slack item ${itemId}...`);
-          await slack.apiCall('slackLists.items.update', {
-            list_id: process.env.SLACK_LIST_ID,
-            cells: [{
-              row_id: itemId,
-              column_id: columnMap.asana_link,
-              link: {
-                url: newTask.permalink_url,
-                text: 'View in Asana'
-              }
-            }]
-          });
-          
-          console.log(`✅ Created Asana task ${newTask.gid}`);
         }
         
-        // Mark update to prevent echo
-        echoDetector.markUpdate(itemId, 'slack');
-        
-      } catch (error) {
-        console.error(`❌ Error syncing item ${itemId}:`, error.message);
-      }
-    }
-    
-    console.log('✅ Slack → Asana sync complete');
+        console.log('✅ Verification complete - no changes made');
       }
     }
     
