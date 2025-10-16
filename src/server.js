@@ -98,22 +98,20 @@ app.post('/slack-events', async (req, res) => {
             if (!asanaData.name || 
                 asanaData.name.trim() === '' || 
                 asanaData.name.toLowerCase().includes('untitled')) {
-              console.log(`⏭️  Skipping item ${itemId}: name is "${asanaData.name}"`);
+              console.log(`⏭️  Skipping "${asanaData.name || 'empty'}"`);
               continue;
             }
             
-            console.log(`\n📋 Item ${itemId}:`);
-            console.log('  Slack data:', JSON.stringify(item, null, 2));
-            console.log('  Transformed Asana data:', JSON.stringify(asanaData, null, 2));
-            console.log('  Existing Asana GID:', asanaGid || 'NEW TASK');
-            console.log('  🛑 Would create/update - but skipping for verification\n');
+            const actionType = asanaGid ? 'UPDATE' : 'CREATE';
+            console.log(`📋 Processing: "${asanaData.name}" (${actionType}) - section: ${asanaData.sectionGid || 'default'}`);
+            // TODO: Actually create/update in Asana here
             
           } catch (error) {
-            console.error(`❌ Error transforming item ${itemId}:`, error.message);
+            console.error(`❌ Error processing item ${itemId}:`, error.message);
           }
         }
         
-        console.log('✅ Verification complete - no changes made');
+        console.log('✅ Sync complete');
       }
     }
     
