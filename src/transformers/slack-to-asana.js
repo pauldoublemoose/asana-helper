@@ -16,7 +16,7 @@ class SlackToAsanaTransformer {
    * @returns {object} Asana task data
    */
   transform(slackItem) {
-    const cells = this.parseCells(slackItem.cells);
+    const cells = this.parseCells(slackItem.fields || slackItem.cells);
     
     // Map custom fields
     const customFields = {};
@@ -74,7 +74,7 @@ class SlackToAsanaTransformer {
    * @returns {string|null} Asana task GID or null if not found
    */
   extractAsanaGid(slackItem) {
-    const cells = this.parseCells(slackItem.cells);
+    const cells = this.parseCells(slackItem.fields || slackItem.cells);
     const link = cells.asana_link;
     
     if (!link) return null;
@@ -86,8 +86,8 @@ class SlackToAsanaTransformer {
   }
   
   /**
-   * Parse Slack cells array into object keyed by column key
-   * @param {array} cells - Array of cell objects from Slack
+   * Parse Slack cells/fields array into object keyed by column key
+   * @param {array} cells - Array of cell/field objects from Slack
    * @returns {object} Cells keyed by column key
    */
   parseCells(cells) {
@@ -98,7 +98,7 @@ class SlackToAsanaTransformer {
     }
     
     cells.forEach(cell => {
-      const key = cell.column_key;
+      const key = cell.key || cell.column_key;
       
       // Handle different cell types
       if (cell.text !== undefined) {
@@ -106,6 +106,9 @@ class SlackToAsanaTransformer {
       } else if (cell.select && Array.isArray(cell.select)) {
         // Select fields - take first value
         result[key] = cell.select[0];
+      } else if (cell.link && Array.isArray(cell.link)) {
+        // Link can be an array - take first link's originalUrl
+        result[key] = cell.link[0]?.originalUrl || cell.link[0]?.displayName;
       } else if (cell.link) {
         result[key] = cell.link.url || cell.link.text;
       } else if (cell.user) {

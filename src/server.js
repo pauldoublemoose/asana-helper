@@ -94,6 +94,14 @@ app.post('/slack-events', async (req, res) => {
             const asanaData = slackToAsana.transform(item);
             const asanaGid = slackToAsana.extractAsanaGid(item);
             
+            // Skip if name is empty, untitled, or missing
+            if (!asanaData.name || 
+                asanaData.name.trim() === '' || 
+                asanaData.name.toLowerCase().includes('untitled')) {
+              console.log(`⏭️  Skipping item ${itemId}: name is "${asanaData.name}"`);
+              continue;
+            }
+            
             console.log(`\n📋 Item ${itemId}:`);
             console.log('  Slack data:', JSON.stringify(item, null, 2));
             console.log('  Transformed Asana data:', JSON.stringify(asanaData, null, 2));
